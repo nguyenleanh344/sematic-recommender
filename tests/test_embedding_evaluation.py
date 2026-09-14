@@ -150,7 +150,7 @@ def evaluate_query(
     Run semantic search for one query
     and calculate all evaluation metrics.
     """
-    query_embedding = embedding_service.embed(
+    query_embedding = embedding_service.embed_query(
         query
     )
 
@@ -340,7 +340,7 @@ def build_vector_search():
             f"{product['description']}"
         )
 
-        embedding = embedding_service.embed(
+        embedding = embedding_service.embed_document(
             text
         )
 

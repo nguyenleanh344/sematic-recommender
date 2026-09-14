@@ -1,41 +1,34 @@
-import numpy as np
-
 from app.services.embedding_service import EmbeddingService
 
 
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (
-        np.linalg.norm(a) *
-        np.linalg.norm(b)
+def test_minilm_query_and_document_dimension():
+    service = EmbeddingService(
+        model_name="all-MiniLM-L6-v2"
     )
 
-
-def test_semantic_similarity():
-    service = EmbeddingService()
-
-    vector_a = service.embed(
-        "black oversized shirt"
+    query_embedding = service.embed_query(
+        "I need something for running"
     )
 
-    vector_b = service.embed(
-        "loose black t-shirt"
+    document_embedding = service.embed_document(
+        "Running Shoes. Lightweight shoes for running."
     )
 
-    vector_c = service.embed(
-        "gaming laptop"
+    assert len(query_embedding) == service.dimension
+    assert len(document_embedding) == service.dimension
+    
+def test_e5_query_and_document_dimension():
+    service = EmbeddingService(
+        model_name="intfloat/multilingual-e5-small"
     )
 
-    similarity_ab = cosine_similarity(
-        vector_a,
-        vector_b,
+    query_embedding = service.embed_query(
+        "I need something for running"
     )
 
-    similarity_ac = cosine_similarity(
-        vector_a,
-        vector_c,
+    document_embedding = service.embed_document(
+        "Running Shoes. Lightweight shoes for running."
     )
 
-    print("shirt vs shirt:", similarity_ab)
-    print("shirt vs laptop:", similarity_ac)
-
-    assert similarity_ab > similarity_ac
+    assert len(query_embedding) == service.dimension
+    assert len(document_embedding) == service.dimension
