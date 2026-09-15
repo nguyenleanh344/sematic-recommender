@@ -4,199 +4,208 @@ from app.data.products_with_metadata import PRODUCTS_WITH_METADATA
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_search_service import VectorSearchService
 
-
 GROUND_TRUTH = {
     "I want something comfortable and loose to wear every day": {
-        "Black Oversized T-Shirt",
-        "White Cotton T-Shirt",
-        "Gray Hoodie",
+        "Black Oversized T-Shirt": 3,
+        "White Cotton T-Shirt": 3,
+        "Gray Hoodie": 2,
+        "Blue Denim Jeans": 2,
+        "Black Jogger Pants": 2,
+        "Oversized Gray T-Shirt": 3,
+        "Cotton Polo Shirt": 1,
+        "Leather Jacket": 1,
     },
 
     "I need something for running and working out": {
-        "Running Shoes",
-        "Running Shorts",
-        "Dumbbell Set",
-        "Yoga Mat",
+        "Running Shoes": 3,
+        "Running Shorts": 3,
+        "Dumbbell Set": 3,
+        "Yoga Mat": 3,
+        "Training Shoes": 3,
+        "Trail Running Shoes": 2,
+        "Resistance Bands": 2,
+        "Kettlebell": 2,
+        "Exercise Bench": 2,
+        "Running Socks": 1,
+        "Gym Bag": 1,
     },
 
     "I need equipment for programming and working at my desk": {
-        "Mechanical Keyboard",
-        "Wireless Mouse",
-        "4K Monitor",
-        "Office Chair",
+        "Mechanical Keyboard": 3,
+        "Wireless Mouse": 3,
+        "4K Monitor": 3,
+        "Office Chair": 3,
+        "Laptop Stand": 2,
+        "27-inch QHD Monitor": 3,
+        "Laptop Docking Station": 2,
+        "Monitor Arm": 2,
+        "Wireless Keyboard": 2,
+        "USB-C Hub": 2,
+        "Desk Lamp": 2,
+        "Desk Mat": 1,
+        "Webcam": 1,
+        "Desk Organizer": 1,
+        "Standing Desk": 1,
     },
 
     "I am going on an outdoor trip and need useful gear": {
-        "Hiking Boots",
-        "Camping Tent",
-        "Travel Backpack",
-        "Stainless Steel Water Bottle",
+        "Camping Tent": 3,
+        "Hiking Boots": 3,
+        "Travel Backpack": 3,
+        "Stainless Steel Water Bottle": 3,
+        "Trekking Backpack": 3,
+        "Sleeping Bag": 3,
+        "Camping Stove": 2,
+        "Camping Lantern": 2,
+        "Hiking Poles": 2,
+        "Waterproof Dry Bag": 2,
+        "Portable Camping Chair": 1,
+        "Travel Pillow": 1,
+        "Portable Water Filter": 2,
+        "Travel Organizer": 1,
+        "Travel Adapter": 1,
     },
 
     "I want something that makes cooking and daily household tasks easier": {
-        "Air Fryer",
-        "Electric Kettle",
-        "Coffee Maker",
-        "Robot Vacuum",
+        "Air Fryer": 3,
+        "Electric Kettle": 3,
+        "Coffee Maker": 3,
+        "Robot Vacuum": 3,
+        "Toaster": 2,
+        "Blender": 2,
+        "Rice Cooker": 2,
+        "Food Processor": 2,
+        "Electric Grill": 2,
+        "Dishwasher": 2,
+        "Cordless Vacuum": 2,
+        "Robot Mop": 2,
+        "Kitchen Scale": 1,
+        "Storage Container Set": 1,
     },
 }
 
 
-def precision_at_k(results, relevant, k):
-    """
-    Calculate Precision@K.
-
-    Precision@K measures how many of the top K
-    results are relevant.
-    """
+def precision_at_k(results, relevance, k):
     top_k = results[:k]
 
     relevant_count = sum(
-        1
-        for product in top_k
-        if product["name"] in relevant
+        relevance.get(item["name"], 0) > 0
+        for item in top_k
     )
 
     return relevant_count / k
 
 
-def recall_at_k(results, relevant, k):
-    """
-    Calculate Recall@K.
-
-    Recall@K measures how many of all relevant
-    products were retrieved within the top K.
-    """
+def recall_at_k(results, relevance, k):
     top_k = results[:k]
 
     relevant_count = sum(
-        1
-        for product in top_k
-        if product["name"] in relevant
+        relevance.get(item["name"], 0) > 0
+        for item in top_k
     )
 
-    return relevant_count / len(relevant)
+    total_relevant = sum(
+        grade > 0
+        for grade in relevance.values()
+    )
+
+    if total_relevant == 0:
+        return 0.0
+
+    return relevant_count / total_relevant
 
 
-def reciprocal_rank(results, relevant):
-    """
-    Calculate Reciprocal Rank.
-
-    Returns the reciprocal of the rank of the
-    first relevant result.
-    """
-    for rank, product in enumerate(results, start=1):
-        if product["name"] in relevant:
-            return 1 / rank
+def reciprocal_rank(results, relevance, k):
+    for rank, item in enumerate(results[:k], start=1):
+        if relevance.get(item["name"], 0) > 0:
+            return 1.0 / rank
 
     return 0.0
 
 
-def ndcg_at_k(results, relevant, k):
-    """
-    Calculate NDCG@K.
+def dcg_at_k(results, relevance, k):
+    score = 0.0
 
-    NDCG evaluates the quality of the ranking,
-    giving more weight to relevant results
-    appearing near the top.
-    """
-    top_k = results[:k]
+    for rank, item in enumerate(results[:k], start=1):
+        grade = relevance.get(item["name"], 0)
 
-    # Calculate DCG
-    dcg = 0.0
+        score += (2**grade - 1) / math.log2(rank + 1)
 
-    for rank, product in enumerate(top_k, start=1):
-        relevance = (
-            1
-            if product["name"] in relevant
-            else 0
-        )
+    return score
 
-        dcg += (
-            (2**relevance - 1)
-            / math.log2(rank + 1)
-        )
 
-    # Calculate ideal DCG
-    ideal_relevances = [
-        1
-    ] * min(len(relevant), k)
+def ndcg_at_k(results, relevance, k):
+    actual_dcg = dcg_at_k(results, relevance, k)
 
-    idcg = 0.0
+    ideal_results = sorted(
+        relevance.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
 
-    for rank, relevance in enumerate(
-        ideal_relevances,
-        start=1,
-    ):
-        idcg += (
-            (2**relevance - 1)
-            / math.log2(rank + 1)
-        )
+    ideal_dcg = 0.0
 
-    if idcg == 0:
+    for rank, (_, grade) in enumerate(ideal_results[:k], start=1):
+        ideal_dcg += (2**grade - 1) / math.log2(rank + 1)
+
+    if ideal_dcg == 0:
         return 0.0
 
-    return dcg / idcg
+    return actual_dcg / ideal_dcg
 
 
 def evaluate_query(
-    query,
-    embedding_service,
     vector_search,
-    relevant,
-    k=5,
+    embedding_service,
+    query,
+    relevance,
+    k_values=(5, 10),
 ):
-    """
-    Run semantic search for one query
-    and calculate all evaluation metrics.
-    """
-    query_embedding = embedding_service.embed_query(
-        query
-    )
+    query_embedding = embedding_service.embed_query(query)
 
     results = vector_search.search(
         query_embedding=query_embedding,
-        top_k=k,
+        top_k=max(k_values),
     )
 
-    precision = precision_at_k(
-        results,
-        relevant,
-        k,
-    )
-
-    recall = recall_at_k(
-        results,
-        relevant,
-        k,
-    )
-
-    rr = reciprocal_rank(
-        results,
-        relevant,
-    )
-
-    ndcg = ndcg_at_k(
-        results,
-        relevant,
-        k,
-    )
-
-    return {
+    evaluation = {
         "query": query,
         "results": results,
-        "precision": precision,
-        "recall": recall,
-        "rr": rr,
-        "ndcg": ndcg,
+        "metrics": {},
     }
+
+    for k in k_values:
+        evaluation["metrics"][k] = {
+            "precision": precision_at_k(
+                results,
+                relevance,
+                k,
+            ),
+            "recall": recall_at_k(
+                results,
+                relevance,
+                k,
+            ),
+            "mrr": reciprocal_rank(
+                results,
+                relevance,
+                k,
+            ),
+            "ndcg": ndcg_at_k(
+                results,
+                relevance,
+                k,
+            ),
+        }
+
+    return evaluation
 
 
 def evaluate_model(
     embedding_service,
     vector_search,
     ground_truth,
-    k=5,
+    k_values=(5, 10),
 ):
     """
     Evaluate an embedding/search model
@@ -204,13 +213,13 @@ def evaluate_model(
     """
     evaluations = []
 
-    for query, relevant in ground_truth.items():
+    for query, relevance in ground_truth.items():
         evaluation = evaluate_query(
             query=query,
             embedding_service=embedding_service,
             vector_search=vector_search,
-            relevant=relevant,
-            k=k,
+            relevance=relevance,
+            k_values=k_values,
         )
 
         evaluations.append(evaluation)
@@ -219,108 +228,88 @@ def evaluate_model(
 
 
 def summarize_evaluations(evaluations):
-    """
-    Calculate average evaluation metrics
-    across all queries.
-    """
-    average_precision = sum(
-        evaluation["precision"]
-        for evaluation in evaluations
-    ) / len(evaluations)
+    k_values = evaluations[0]["metrics"].keys()
 
-    average_recall = sum(
-        evaluation["recall"]
-        for evaluation in evaluations
-    ) / len(evaluations)
+    summary = {}
 
-    mean_reciprocal_rank = sum(
-        evaluation["rr"]
-        for evaluation in evaluations
-    ) / len(evaluations)
+    for k in k_values:
+        summary[k] = {
+            "precision": sum(
+                evaluation["metrics"][k]["precision"]
+                for evaluation in evaluations
+            ) / len(evaluations),
 
-    average_ndcg = sum(
-        evaluation["ndcg"]
-        for evaluation in evaluations
-    ) / len(evaluations)
+            "recall": sum(
+                evaluation["metrics"][k]["recall"]
+                for evaluation in evaluations
+            ) / len(evaluations),
 
-    return {
-        "precision": average_precision,
-        "recall": average_recall,
-        "mrr": mean_reciprocal_rank,
-        "ndcg": average_ndcg,
-    }
+            "mrr": sum(
+                evaluation["metrics"][k]["mrr"]
+                for evaluation in evaluations
+            ) / len(evaluations),
+
+            "ndcg": sum(
+                evaluation["metrics"][k]["ndcg"]
+                for evaluation in evaluations
+            ) / len(evaluations),
+        }
+
+    return summary
 
 
-def print_evaluation(evaluations, k):
-    """
-    Print detailed evaluation results
-    for every query.
-    """
-    for index, evaluation in enumerate(
-        evaluations,
-        start=1,
-    ):
-        print("\n" + "=" * 60)
+def print_evaluation(evaluation):
+    print("=" * 60)
+    print(f"QUERY: {evaluation['query']}")
+    print("=" * 60)
+
+    for rank, item in enumerate(evaluation["results"], start=1):
         print(
-            f"QUERY {index}: "
-            f"{evaluation['query']}"
-        )
-        print("=" * 60)
-
-        for result in evaluation["results"]:
-            print(
-                f"{result['similarity']:.4f}"
-                f" | {result['name']}"
-            )
-
-        print(
-            f"\nPrecision@{k}: "
-            f"{evaluation['precision']:.2f}"
+            f"{rank:2}. "
+            f"{item['similarity']:.4f} | "
+            f"{item['name']}"
         )
 
-        print(
-            f"Recall@{k}:    "
-            f"{evaluation['recall']:.2f}"
-        )
-
-        print(
-            f"Reciprocal Rank: "
-            f"{evaluation['rr']:.2f}"
-        )
-
-        print(
-            f"NDCG@{k}:        "
-            f"{evaluation['ndcg']:.2f}"
-        )
+    for k, metrics in evaluation["metrics"].items():
+        print()
+        print(f"Metrics @ {k}")
+        print(f"Precision@{k}: {metrics['precision']:.2f}")
+        print(f"Recall@{k}:    {metrics['recall']:.2f}")
+        print(f"MRR@{k}:       {metrics['mrr']:.2f}")
+        print(f"NDCG@{k}:      {metrics['ndcg']:.2f}")
 
 
-def print_summary(summary, k):
+def print_summary(summary):
     """
-    Print average evaluation metrics.
+    Print average evaluation metrics for each K.
     """
     print("\n" + "=" * 60)
     print("EVALUATION SUMMARY")
     print("=" * 60)
 
-    print(
-        f"Average Precision@{k}: "
-        f"{summary['precision']:.2f}"
-    )
+    for k, metrics in summary.items():
+        print()
+        print(f"@{k}")
 
-    print(
-        f"Average Recall@{k}:    "
-        f"{summary['recall']:.2f}"
-    )
+        print(
+            f"Average Precision@{k}: "
+            f"{metrics['precision']:.2f}"
+        )
 
-    print(
-        f"Mean Reciprocal Rank: "
-        f"{summary['mrr']:.2f}"
-    )
+        print(
+            f"Average Recall@{k}:    "
+            f"{metrics['recall']:.2f}"
+        )
 
-    print(
-        f"Average NDCG@{k}:      "
-        f"{summary['ndcg']:.2f}"
-    )
+        print(
+            f"Mean Reciprocal Rank@{k}: "
+            f"{metrics['mrr']:.2f}"
+        )
+
+        print(
+            f"Average NDCG@{k}:      "
+            f"{metrics['ndcg']:.2f}"
+        )
 
 
 def build_vector_search():
@@ -360,32 +349,23 @@ def build_vector_search():
 
 
 def main():
-    k = 5
+    k_values = (5, 10)
 
-    embedding_service, vector_search = (
-        build_vector_search()
-    )
+    embedding_service, vector_search = build_vector_search()
 
     evaluations = evaluate_model(
         embedding_service=embedding_service,
         vector_search=vector_search,
         ground_truth=GROUND_TRUTH,
-        k=k,
+        k_values=k_values,
     )
 
-    print_evaluation(
-        evaluations,
-        k,
-    )
+    for evaluation in evaluations:
+        print_evaluation(evaluation)
 
-    summary = summarize_evaluations(
-        evaluations
-    )
+    summary = summarize_evaluations(evaluations)
 
-    print_summary(
-        summary,
-        k,
-    )
+    print_summary(summary)  
 
 
 if __name__ == "__main__":

@@ -1,113 +1,174 @@
+import time
+
 from app.data.products_with_metadata import PRODUCTS_WITH_METADATA
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_search_service import VectorSearchService
 
-from .test_embedding_evaluation import (
+from tests.test_embedding_evaluation import (
     GROUND_TRUTH,
-    evaluate_query,
     evaluate_model,
     summarize_evaluations,
-    print_evaluation,
 )
 
 
-MODELS = [
-    "all-MiniLM-L6-v2",
-    "intfloat/multilingual-e5-small",
-]
+MODELS = {
+    "MiniLM": "all-MiniLM-L6-v2",
+    "E5": "intfloat/multilingual-e5-small",
+}
 
 
-def build_vector_search(
-    embedding_service: EmbeddingService,
-) -> VectorSearchService:
+def build_vector_search(model_name):
+    embedding_service = EmbeddingService(
+        model_name=model_name
+    )
+
     vector_search = VectorSearchService(
         dimension=embedding_service.dimension
     )
 
+    document_embedding_start = time.perf_counter()
+
     for product in PRODUCTS_WITH_METADATA:
-        text = f"{product['name']}. {product['description']}"
+        text = (
+            f"{product['name']}. "
+            f"{product['description']}"
+        )
 
         embedding = embedding_service.embed_document(text)
+
+        metadata = {
+            "category": product["category"],
+            "subcategory": product["subcategory"],
+        }
 
         vector_search.add_product(
             product_id=product["id"],
             name=product["name"],
             embedding=embedding,
-            metadata=product,
+            metadata=metadata,
         )
 
-    return vector_search
-
-
-def test_model(model_name: str):
-    """
-    Test a single embedding model
-    and return summary metrics.
-    """
-    print(f"\n{'=' * 60}")
-    print(f"Testing Model: {model_name}")
-    print(f"{'=' * 60}")
-
-    embedding_service = EmbeddingService(
-        model_name=model_name
+    document_embedding_time = (
+        time.perf_counter()
+        - document_embedding_start
     )
 
-    vector_search = build_vector_search(
-        embedding_service
+    return (
+        embedding_service,
+        vector_search,
+        document_embedding_time,
     )
 
-    # Run evaluation across all queries
+
+def measure_query_latency(
+    embedding_service,
+    queries,
+    warmup_runs=1,
+    benchmark_runs=10,
+):
+    """
+    Measure average query embedding latency.
+    """
+
+    # Warm up the model before measuring.
+    for query in queries[:warmup_runs]:
+        embedding_service.embed_query(query)
+
+    total_time = 0.0
+    total_runs = 0
+
+    for _ in range(benchmark_runs):
+        for query in queries:
+            start = time.perf_counter()
+
+            embedding_service.embed_query(query)
+
+            elapsed = time.perf_counter() - start
+
+            total_time += elapsed
+            total_runs += 1
+
+    return total_time / total_runs
+
+
+def evaluate_model_name(model_name):
+    (
+        embedding_service,
+        vector_search,
+        document_embedding_time,
+    ) = build_vector_search(model_name)
+
     evaluations = evaluate_model(
         embedding_service=embedding_service,
         vector_search=vector_search,
         ground_truth=GROUND_TRUTH,
-        k=5,
+        k_values=(5, 10),
     )
 
-    # Print detailed results
-    print_evaluation(evaluations, k=5)
-
-    # Calculate summary metrics
     summary = summarize_evaluations(evaluations)
 
-    print(f"\n{'=' * 60}")
-    print(f"SUMMARY - {model_name}")
-    print(f"{'=' * 60}")
-    print(f"Dimension:   {embedding_service.dimension}")
-    print(f"Precision@5: {summary['precision']:.4f}")
-    print(f"Recall@5:    {summary['recall']:.4f}")
-    print(f"MRR@5:       {summary['mrr']:.4f}")
-    print(f"NDCG@5:      {summary['ndcg']:.4f}")
+    queries = list(GROUND_TRUTH.keys())
 
-    return summary
+    query_latency = measure_query_latency(
+        embedding_service=embedding_service,
+        queries=queries,
+    )
+
+    return {
+        "summary": summary,
+        "dimension": embedding_service.dimension,
+        "document_embedding_time": document_embedding_time,
+        "query_latency": query_latency,
+    }
 
 
 def main():
-    """
-    Compare embedding models systematically.
-    """
     results = {}
 
-    for model_name in MODELS:
-        results[model_name] = test_model(model_name)
+    for name, model_name in MODELS.items():
+        print()
+        print("=" * 60)
+        print(f"MODEL: {name}")
+        print("=" * 60)
 
-    # Print final comparison table
-    print(f"\n{'=' * 80}")
-    print("MODELS COMPARISON TABLE")
-    print(f"{'=' * 80}")
-    print(f"{'Model':<35} | {'Precision':>10} | {'Recall':>10} | {'MRR':>10} | {'NDCG':>10}")
-    print("-" * 80)
-
-    for model_name, summary in results.items():
-        print(
-            f"{model_name:<35} | "
-            f"{summary['precision']:>10.4f} | "
-            f"{summary['recall']:>10.4f} | "
-            f"{summary['mrr']:>10.4f} | "
-            f"{summary['ndcg']:>10.4f}"
+        results[name] = evaluate_model_name(
+            model_name
         )
 
-    print(f"{'=' * 80}\n")
+    print()
+    print("=" * 60)
+    print("MODEL COMPARISON")
+    print("=" * 60)
+
+    for name, result in results.items():
+        summary = result["summary"]
+
+        print()
+        print(name)
+
+        print(
+            f"Dimension: "
+            f"{result['dimension']}"
+        )
+
+        print(
+            f"Document embedding time: "
+            f"{result['document_embedding_time']:.4f}s"
+        )
+
+        print(
+            f"Average query latency: "
+            f"{result['query_latency'] * 1000:.2f} ms"
+        )
+
+        for k, metrics in summary.items():
+            print(
+                f"@{k} | "
+                f"Precision={metrics['precision']:.2f} | "
+                f"Recall={metrics['recall']:.2f} | "
+                f"MRR={metrics['mrr']:.2f} | "
+                f"NDCG={metrics['ndcg']:.2f}"
+            )
 
 
 if __name__ == "__main__":
